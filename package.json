@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "start": "node server.js",
+    "start": "concurrently \"node server.js\" \"node services/taxiSimulator.js\"",
     "dev": "concurrently \"nodemon server.js\" \"node services/taxiSimulator.js\"",
     "test:simulator": "node test-taxi-simulator.js",
     "simulator": "node services/taxiSimulator.js"

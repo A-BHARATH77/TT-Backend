@@ -28,4 +28,4 @@ services:
     region: oregon
     plan: free
     maxmemoryPolicy: allkeys-lru
-    ipAllowList: []   # ← This fixes the error
+    ipAllowList: []
