@@ -22,8 +22,10 @@ services:
           type: redis
           name: taxi-trackit-redis
           property: connectionString
+
   - type: redis
     name: taxi-trackit-redis
     region: oregon
     plan: free
     maxmemoryPolicy: allkeys-lru
+    ipAllowList: []   # ← This fixes the error
