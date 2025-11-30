@@ -18,6 +18,8 @@ services:
         sync: false
       - key: SUPABASE_KEY
         sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
       - key: REDIS_URL
         fromService:
           type: redis
@@ -30,4 +32,3 @@ services:
     region: oregon
     plan: free
     maxmemoryPolicy: allkeys-lru
-    ipAllowList: []
