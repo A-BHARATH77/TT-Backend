@@ -3,20 +3,31 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
-if (!process.env.REDIS_HOST) {
-  console.error("❌ REDIS_HOST is not set in environment! Make sure Redis service is linked in Render.");
-  process.exit(1);
+const redisUrl = process.env.REDIS_URL;
+
+if (!redisUrl) {
+  console.error("❌ REDIS_URL is not set in environment! Render provides this after Redis service is created.");
+  // Don't exit, let backend start and retry Redis connection
 }
 
-const redisUrl = `redis://${process.env.REDIS_PASSWORD ? `:${process.env.REDIS_PASSWORD}@` : ''}${process.env.REDIS_HOST}:${process.env.REDIS_PORT}`;
+console.log("🔄 Connecting to Redis using:", redisUrl || "waiting for Render to inject REDIS_URL...");
 
-console.log('🔄 Connecting to Redis:', redisUrl);
+const redis = createClient({
+  url: redisUrl
+});
 
-const redis = createClient({ url: redisUrl });
+redis.on('error', err => console.error("❌ Redis Error:", err));
 
-redis.on('error', (err) => console.error('❌ Redis Client Error:', err));
-redis.on('connect', () => console.log('✅ Redis connected'));
+async function connectRedis() {
+  try {
+    await redis.connect();
+    console.log("✅ Redis connected successfully");
+  } catch {
+    console.error("⏳ Redis connection failed, retrying in 5 seconds...");
+    setTimeout(connectRedis, 5000); // Render needs time to provision Redis
+  }
+}
 
-await redis.connect();
+connectRedis();
 
 export default redis;
