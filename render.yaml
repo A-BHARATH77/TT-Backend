@@ -18,21 +18,11 @@ services:
         sync: false
       - key: SUPABASE_KEY
         sync: false
-      - key: REDIS_HOST
+      - key: REDIS_URL
         fromService:
           type: redis
           name: taxi-trackit-redis
-          property: host
-      - key: REDIS_PORT
-        fromService:
-          type: redis
-          name: taxi-trackit-redis
-          property: port
-      - key: REDIS_PASSWORD
-        fromService:
-          type: redis
-          name: taxi-trackit-redis
-          property: password
+          property: connectionString
 
   # Redis Instance
   - type: redis
