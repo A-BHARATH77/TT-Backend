@@ -16,7 +16,7 @@ services:
         value: 5000
       - key: SUPABASE_URL
         sync: false
-      - key: SUPABASE_ANON_KEY
+      - key: SUPABASE_KEY
         sync: false
       - key: REDIS_HOST
         fromService:
