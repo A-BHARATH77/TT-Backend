@@ -28,8 +28,13 @@ app.use((req, res, next) => {
   next();
 });
 
+app.get('/', (req, res) => {
+  res.status(200).json({ status: 'ok', message: 'Taxi TrackIt API is running' });
+});
+
 // Setup WebSocket
 setupWebSocket(server);
+
 
 const PORT = process.env.PORT || 5000;
 
