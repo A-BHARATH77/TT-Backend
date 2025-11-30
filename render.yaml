@@ -1,5 +1,4 @@
 services:
-  # Backend API Server
   - type: web
     name: taxi-trackit-backend
     runtime: node
@@ -23,8 +22,6 @@ services:
           type: redis
           name: taxi-trackit-redis
           property: connectionString
-
-  # Redis Instance
   - type: redis
     name: taxi-trackit-redis
     region: oregon
