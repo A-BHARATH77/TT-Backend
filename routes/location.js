@@ -1,118 +1,145 @@
-const express = require("express");
-const router = express.Router();
-const pool = require("../db/postgres");
-const redis = require("../db/redis");
-const turf = require("@turf/turf");
+import express from 'express';
+import redisService from '../services/redisService.js';
+import zoneService from '../services/zoneService.js';
 
-// POST /location/update
-router.post("/update", async (req, res) => {
+const router = express.Router();
+
+// POST /api/location/update - Update taxi location
+router.post('/location/update', async (req, res) => {
   try {
     const { taxi_id, lat, lng, speed } = req.body;
 
-    if (!taxi_id || !lat || !lng) {
-      return res.status(400).json({ error: "Missing fields" });
+    // Validate input
+    if (!taxi_id || lat === undefined || lng === undefined) {
+      return res.status(400).json({ 
+        error: 'Missing required fields: taxi_id, lat, lng' 
+      });
     }
 
-    const point = turf.point([lng, lat]);
+    // Validate coordinates
+    if (lat < -90 || lat > 90 || lng < -180 || lng > 180) {
+      return res.status(400).json({ 
+        error: 'Invalid coordinates' 
+      });
+    }
 
-    // 1. Load all zones from DB
-    const zonesResult = await pool.query("SELECT id, boundary FROM zones");
-    let currentZone = null;
+    // 1. Detect current zone using Turf.js
+    const currentZone = await zoneService.detectZone(lat, lng);
 
-    for (const zone of zonesResult.rows) {
-      if (turf.booleanPointInPolygon(point, zone.boundary)) {
-        currentZone = zone.id;
-        break;
+    // 2. Get last known zone from Redis
+    const lastZone = await redisService.getTaxiZone(taxi_id);
+
+    // 3. Check if zone changed
+    let zoneChanged = false;
+    if (String(lastZone) !== String(currentZone)) {
+      zoneChanged = true;
+
+      // Log zone changes to console (zone_crossings table is used via separate endpoint)
+      if (lastZone && lastZone !== 'null') {
+        console.log(`🚪 Taxi ${taxi_id} EXIT zone ${lastZone}`);
       }
+
+      if (currentZone) {
+        console.log(`🚪 Taxi ${taxi_id} ENTER zone ${currentZone}`);
+      }
+
+      // Update zone in Redis
+      await redisService.setTaxiZone(taxi_id, currentZone);
     }
 
-    // 2. Fetch last known zone from Redis
-    const lastZone = await redis.get(`taxi:${taxi_id}:zone`);
+    // 4. Store latest location in Redis
+    await redisService.setTaxiLocation(taxi_id, {
+      lat,
+      lng,
+      speed: speed || 0,
+      zone: currentZone
+    });
 
-    // 3. Detect zone ENTER / EXIT
-    if (lastZone !== currentZone) {
-      // Store event in PostgreSQL
-      await pool.query(
-        `INSERT INTO zone_events (taxi_id, zone_id, event_type)
-         VALUES ($1, $2, $3)`,
-        [
-          taxi_id,
-          currentZone ? currentZone : lastZone,
-          currentZone ? "ENTER" : "EXIT"
-        ]
-      );
+    // 5. Publish update to WebSocket clients via Redis Pub/Sub
+    await redisService.publishTaxiUpdate({
+      taxi_id,
+      lat,
+      lng,
+      speed: speed || 0,
+      zone: currentZone,
+      zone_changed: zoneChanged,
+      timestamp: Date.now()
+    });
 
-      // Update zone status table
-      await pool.query(
-        `INSERT INTO taxi_zone_status (taxi_id, current_zone)
-         VALUES ($1, $2)
-         ON CONFLICT (taxi_id)
-         DO UPDATE SET current_zone = EXCLUDED.current_zone`,
-        [taxi_id, currentZone]
-      );
-    }
+    console.log(`✅ Location updated for ${taxi_id}: (${lat.toFixed(6)}, ${lng.toFixed(6)}) Zone: ${currentZone || 'None'}`);
 
-    // 4. Update Redis (latest location + zone)
-    await redis.set(
-      `taxi:${taxi_id}:location`,
-      JSON.stringify({
-        lat,
-        lng,
-        speed,
-        zone: currentZone,
-        timestamp: Date.now(),
-      })
-    );
+    // 6. (Optional) Log to history table for analytics
+    await zoneService.logLocationHistory(taxi_id, lat, lng, speed, currentZone);
 
-    await redis.set(`taxi:${taxi_id}:zone`, currentZone || "");
-
-    // 5. Publish update for WebSocket clients
-    await redis.publish(
-      "taxi_updates",
-      JSON.stringify({
+    // Return response
+    res.json({
+      success: true,
+      message: 'Location updated',
+      data: {
         taxi_id,
-        lat,
-        lng,
         zone: currentZone,
-      })
-    );
+        zone_changed: zoneChanged
+      }
+    });
 
-    // 6. (Optional) Insert into history table
-    await pool.query(
-      `INSERT INTO taxi_locations (taxi_id, lat, lng, speed, zone)
-       VALUES ($1, $2, $3, $4, $5)`,
-      [taxi_id, lat, lng, speed, currentZone]
-    );
-
-    res.json({ message: "Location updated", zone: currentZone });
-
-  } catch (err) {
-    console.error("Location update error:", err);
-    res.status(500).json({ error: "Server error" });
+  } catch (error) {
+    console.error('❌ Location update error:', error);
+    res.status(500).json({ 
+      error: 'Server error while updating location',
+      message: error.message 
+    });
   }
 });
 
-
-// GET /location/latest — get all taxi current positions (from Redis)
-router.get("/latest", async (req, res) => {
+// GET /api/location/latest - Get all current taxi locations
+router.get('/location/latest', async (req, res) => {
   try {
-    const keys = await redis.keys("taxi:*:location");
+    const locations = await redisService.getAllTaxiLocations();
 
-    const locations = [];
-    for (const key of keys) {
-      const data = await redis.get(key);
-      if (data) {
-        const taxi_id = key.split(":")[1];
-        locations.push({ taxi_id, ...JSON.parse(data) });
-      }
+    console.log(`📊 API /location/latest - Returning ${locations.length} locations:`, locations.map(l => l.taxi_id));
+
+    res.json({
+      success: true,
+      count: locations.length,
+      data: locations
+    });
+
+  } catch (error) {
+    console.error('❌ Error fetching locations:', error);
+    res.status(500).json({ 
+      error: 'Server error while fetching locations',
+      message: error.message 
+    });
+  }
+});
+
+// GET /api/location/:taxi_id - Get specific taxi location
+router.get('/location/:taxi_id', async (req, res) => {
+  try {
+    const { taxi_id } = req.params;
+    const location = await redisService.getTaxiLocation(taxi_id);
+
+    if (!location) {
+      return res.status(404).json({
+        error: 'Taxi location not found'
+      });
     }
 
-    res.json(locations);
+    res.json({
+      success: true,
+      data: {
+        taxi_id,
+        ...location
+      }
+    });
 
-  } catch (err) {
-    console.error("Error fetching locations:", err);
-    res.status(500).json({ error: "Server error" });
+  } catch (error) {
+    console.error('❌ Error fetching taxi location:', error);
+    res.status(500).json({ 
+      error: 'Server error while fetching taxi location',
+      message: error.message 
+    });
   }
 });
 
-module.exports = router;
+export default router;
